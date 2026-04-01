@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>蛮</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pixi.js/7.2.4/pixi.min.js"></script>
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; background-color: #ffffff; user-select: none; }
+        
+        #ui-container {
+            position: absolute; bottom: 40px; right: 40px;
+            display: flex; gap: 15px; z-index: 100;
+        }
+        .glass-btn {
+            width: 70px; height: 70px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.4);
+            border: 1px solid rgba(255, 255, 255, 0.6);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.05);
+            color: rgba(80, 80, 80, 0.8);
+            font-family: "Microsoft YaHei", sans-serif;
+            font-size: 14px; font-weight: bold;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; transition: all 0.2s ease;
+        }
+        .glass-btn:hover { background: rgba(255, 255, 255, 0.6); transform: translateY(-2px); }
+        .glass-btn:active { transform: translateY(1px); }
+
+        #start-guide {
+            position: absolute; top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+            font-family: "Microsoft YaHei", sans-serif;
+            font-size: 24px; color: #999;
+            letter-spacing: 4px; pointer-events: none;
+            transition: opacity 1s ease; z-index: 50;
+        }
+
+        #hint {
+            position: absolute; bottom: 30px; left: 40px;
+            font-family: "Microsoft YaHei", sans-serif; color: #ccc; z-index: 10;
+            font-size: 12px; pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="start-guide">按下“前进”开始游戏</div>
+    <div id="hint">键盘 [↑] 前进, [↓] 停下, [Space] 切换角色</div>
+    
+    <div id="ui-container">
+        <div id="btn-switch" class="glass-btn">切换</div>
+        <div id="btn-stop" class="glass-btn">停下</div>
+        <div id="btn-forward" class="glass-btn">前进</div>
+    </div>
+
+    <script>
+        const app = new PIXI.Application({
+            width: window.innerWidth, height: window.innerHeight,
+            backgroundColor: 0xffffff, antialias: true,
+        });
+        document.body.appendChild(app.view);
+
+        // --- 1. 【核心修改：提升初始速度】 ---
+        // 将 maxSpeed 从 0.8 提升至 0.96 (1.2倍)
+        const PHYSICS = {
+            maxSpeed: 0.96, acceleration: 0.018, friction: 0.012,
+            currentSpeed: 0, targetSpeed: 0,
+        };
+
+        const leafGfx = new PIXI.Graphics();
+        leafGfx.beginFill(0xffffff);
+        leafGfx.drawRoundedRect(0, 0, 15, 6, 3); 
+        leafGfx.endFill();
+        const leafTexture = app.renderer.generateTexture(leafGfx);
+
+        // 拖尾渐变纹理
+        const trailCanvas = document.createElement('canvas');
+        trailCanvas.width = 120; trailCanvas.height = 6;
+        const ctx = trailCanvas.getContext('2d');
+        const grd = ctx.createLinearGradient(0, 0, 120, 0);
+        grd.addColorStop(0, 'rgba(255, 255, 255, 1)'); 
+        grd.addColorStop(1, 'rgba(255, 255, 255, 0)'); 
+        ctx.fillStyle = grd;
+        ctx.beginPath(); ctx.arc(3, 3, 3, Math.PI/2, Math.PI*1.5); 
+        ctx.lineTo(120, 0); ctx.lineTo(120, 6);
+        ctx.closePath(); ctx.fill();
+        const trailTexture = PIXI.Texture.from(trailCanvas);
+
+        let girlHairStrands = [];
+
+        function createRider(isGirl = false) {
+            const container = new PIXI.Container(); 
+            const skinColor = 0xFFDAB9; 
+            const skinColorBack = 0xF5CBA7; 
+            
+            const bike = new PIXI.Graphics();
+            bike.lineStyle(2.5, 0x98FB98, 0.8);
+            bike.moveTo(-25, 0); bike.lineTo(25, 0); 
+            bike.moveTo(-12, 0); bike.lineTo(-12, -15); 
+            bike.moveTo(22, 0); bike.lineTo(22, -18); 
+            bike.lineStyle(1.5, 0x666666);
+            bike.drawCircle(-25, 5, 15); bike.drawCircle(25, 5, 15); 
+            container.addChild(bike);
+
+            const bodyStructure = new PIXI.Container(); 
+            container.addChild(bodyStructure);
+
+            const hipX = -12, hipY = -18;        
+            const shoulderX = 2, shoulderY = -46;  
+            const handX = 22, handY = -18;       
+            const pedalFrontX = -2, pedalFrontY = 10; 
+            const pedalBackX = -12, pedalBackY = 0;   
+
+            if (isGirl) {
+                const hairColor = 0x5D4037; 
+
+                const limbsBack = new PIXI.Graphics();
+                limbsBack.lineStyle({width: 4.5, color: skinColorBack, cap: 'round', join: 'round'});
+                limbsBack.moveTo(shoulderX - 2, shoulderY); limbsBack.lineTo(handX + 2, handY); 
+                limbsBack.moveTo(hipX + 2, hipY); limbsBack.lineTo(hipX - 2, hipY + 15); limbsBack.lineTo(pedalBackX, pedalBackY); 
+                bodyStructure.addChild(limbsBack);
+
+                const bodyMain = new PIXI.Graphics();
+                bodyMain.beginFill(0xFFD1DC, 0.95); 
+                bodyMain.moveTo(hipX - 8, hipY); 
+                bodyMain.bezierCurveTo(hipX - 10, hipY - 15, shoulderX - 5, shoulderY, shoulderX, shoulderY - 2); 
+                bodyMain.lineTo(shoulderX + 6, shoulderY); 
+                bodyMain.bezierCurveTo(shoulderX + 8, hipY - 10, hipX + 12, hipY, hipX + 10, hipY + 2); 
+                bodyMain.closePath(); bodyMain.endFill();
+                
+                bodyMain.beginFill(skinColor); bodyMain.drawCircle(shoulderX + 2, shoulderY - 10, 8); bodyMain.endFill(); 
+                bodyMain.beginFill(hairColor); bodyMain.drawEllipse(shoulderX - 2, shoulderY - 10, 7, 9); bodyMain.endFill(); 
+                bodyMain.beginFill(0xFF69B4); bodyMain.drawEllipse(shoulderX + 1, shoulderY - 17, 9, 4); bodyMain.endFill(); 
+                bodyStructure.addChild(bodyMain);
+
+                const limbsFront = new PIXI.Graphics();
+                limbsFront.lineStyle({width: 5.5, color: skinColor, cap: 'round', join: 'round'});
+                limbsFront.moveTo(shoulderX, shoulderY); limbsFront.lineTo(shoulderX + 10, shoulderY + 12); limbsFront.lineTo(handX, handY); 
+                limbsFront.moveTo(hipX, hipY); limbsFront.lineTo(hipX + 8, hipY + 12); limbsFront.lineTo(pedalFrontX, pedalFrontY); 
+                bodyStructure.addChild(limbsFront);
+
+                if (girlHairStrands.length > 0) {
+                    girlHairStrands.forEach(s => s.destroy()); girlHairStrands = [];
+                }
+                const hairRootX = shoulderX - 2; const hairRootY = shoulderY - 10;
+                
+                for (let i = 0; i < 95; i++) {
+                    const hairStrand = new PIXI.Graphics();
+                    hairStrand.lineStyle(0.6, hairColor, 0.5 + Math.random() * 0.3); 
+                    const rootOffsetX = hairRootX - 2 + Math.random() * 4;
+                    const rootOffsetY = hairRootY - 2 + Math.random() * 8;
+                    hairStrand.moveTo(rootOffsetX, rootOffsetY); 
+                    const cp1X = rootOffsetX - 8 - Math.random() * 6; const cp1Y = rootOffsetY + 6 + Math.random() * 3; 
+                    const cp2X = rootOffsetX - 15 - Math.random() * 10; const cp2Y = rootOffsetY + 15 + Math.random() * 6; 
+                    const endX = rootOffsetX - 22 - Math.random() * 12; const endY = rootOffsetY + 22 + Math.random() * 8; 
+                    hairStrand.bezierCurveTo(cp1X, cp1Y, cp2X, cp2Y, endX, endY);
+                    hairStrand.swayOffsetStrand = Math.random() * Math.PI * 2;
+                    bodyStructure.addChild(hairStrand); 
+                    girlHairStrands.push(hairStrand); 
+                }
+                
+            } else {
+                const clothingColor = 0xFFF176; const hatColor = 0x448AFF; 
+                
+                const limbsBack = new PIXI.Graphics();
+                limbsBack.lineStyle({width: 5, color: skinColorBack, cap: 'round', join: 'round'});
+                limbsBack.moveTo(shoulderX - 2, shoulderY); limbsBack.lineTo(handX + 2, handY); 
+                limbsBack.moveTo(hipX + 2, hipY); limbsBack.lineTo(hipX - 2, hipY + 15); limbsBack.lineTo(pedalBackX, pedalBackY); 
+                bodyStructure.addChild(limbsBack);
+
+                const bodyMain = new PIXI.Graphics();
+                bodyMain.beginFill(clothingColor); 
+                bodyMain.moveTo(hipX - 6, hipY + 2); bodyMain.lineTo(shoulderX - 5, shoulderY);
+                bodyMain.lineTo(shoulderX + 6, shoulderY); bodyMain.lineTo(hipX + 8, hipY + 2);
+                bodyMain.closePath(); bodyMain.endFill();
+                
+                bodyMain.lineStyle(0); bodyMain.beginFill(skinColor); bodyMain.drawCircle(shoulderX + 2, shoulderY - 10, 8); bodyMain.endFill();
+                bodyMain.beginFill(hatColor); bodyMain.drawEllipse(shoulderX + 2, shoulderY - 16, 11, 5); bodyMain.drawRect(shoulderX - 7, shoulderY - 15, 9, 2); bodyMain.endFill();
+                bodyStructure.addChild(bodyMain);
+
+                const limbsFront = new PIXI.Graphics();
+                limbsFront.lineStyle({width: 6, color: skinColor, cap: 'round', join: 'round'});
+                limbsFront.moveTo(shoulderX, shoulderY); limbsFront.lineTo(shoulderX + 10, shoulderY + 12); limbsFront.lineTo(handX, handY); 
+                limbsFront.moveTo(hipX, hipY); limbsFront.lineTo(hipX + 8, hipY + 12); limbsFront.lineTo(pedalFrontX, pedalFrontY); 
+                bodyStructure.addChild(limbsFront);
+            }
+
+            return container;
+        }
+
+        let currentRiderType = 'boy';
+        let boyRider = createRider(false);
+        let girlRider = createRider(true);
+        girlRider.visible = false;
+        
+        const riderGroup = new PIXI.Container();
+        riderGroup.addChild(boyRider, girlRider);
+        riderGroup.x = window.innerWidth * 0.5;
+        riderGroup.y = window.innerHeight * 0.82;
+        app.stage.addChild(riderGroup);
+
+        const treeGroups = []; 
+        const palette = [0xffb7c5, 0x4CAF50, 0xCDEB8B, 0xFFFACD];
+        const CANOPY_Y_CENTER = window.innerHeight * 0.35; 
+        const Y_OFFSET_COMPENSATION = 130; 
+
+        function easeInOutQuad(t) { return t < 0.5 ? 2 * t * t : -1 + (4 - 2 * t) * t; }
+
+        const SHAPES = {
+            round: (radius) => {
+                const angle = Math.random() * Math.PI * 2;
+                const r = radius * Math.sqrt(Math.random()); 
+                return { relX: Math.cos(angle) * r, relY: Math.sin(angle) * r * 1.3 };
+            },
+            fir: (radius) => {
+                const h = (650 * Math.random()) + 50; 
+                const w = (1 - h/750) * radius * 3.5; 
+                return { relX: (Math.random() - 0.5) * w, relY: 150 - h };
+            }
+        };
+
+        function createTree(x, mainColor, mixColor1, mixColor2) {
+            const trunk = new PIXI.Graphics();
+            trunk.beginFill(0xe0d0b0, 0.4); trunk.drawRect(-3, 0, 6, 900);
+            trunk.x = x; trunk.y = CANOPY_Y_CENTER + 50;
+            app.stage.addChildAt(trunk, 0);
+
+            const treeLeaves = [];
+            for (let i = 0; i < 1550; i++) {
+                const p = new PIXI.Sprite(leafTexture); 
+                const rand = Math.random();
+                if (rand < 0.6) p.tint = mainColor;
+                else if (rand < 0.85) p.tint = mixColor1;
+                else p.tint = mixColor2;
+                p.anchor.set(0.5);
+                const roundPos = SHAPES.round(180);
+                p.roundX = roundPos.relX; p.roundY = roundPos.relY;
+                const firPos = SHAPES.fir(180);
+                p.firX = firPos.relX; p.firY = firPos.relY;
+                p.swayOffset = Math.random() * Math.PI * 2;
+                p.swaySpeed = 0.015 + Math.random() * 0.03;
+                
+                // 提高散落阶段的基础速度
+                p.driftSpeed = 0.8 + Math.random() * 1.5; 
+                app.stage.addChildAt(p, 1);
+                treeLeaves.push(p);
+            }
+            treeGroups.push({ logicX: x, trunk: trunk, leaves: treeLeaves });
+        }
+
+        createTree(window.innerWidth * 0.1, palette[0], palette[2], palette[3]);
+        createTree(window.innerWidth * 0.5, palette[1], palette[2], palette[0]);
+        createTree(window.innerWidth * 0.8, palette[0], palette[1], palette[3]);
+        createTree(window.innerWidth * 1.2, palette[1], palette[2], palette[0]);
+
+        let timer = 0;
+        const TRANSITION_DURATION = 12;
+
+        app.ticker.add((delta) => {
+            if (PHYSICS.targetSpeed > PHYSICS.currentSpeed) {
+                PHYSICS.currentSpeed = Math.min(PHYSICS.targetSpeed, PHYSICS.currentSpeed + PHYSICS.acceleration * delta);
+            } else {
+                PHYSICS.currentSpeed = Math.max(0, PHYSICS.currentSpeed - PHYSICS.friction * delta);
+            }
+
+            if (PHYSICS.currentSpeed <= 0) return; 
+
+            timer += (delta / 60) * (PHYSICS.currentSpeed / PHYSICS.maxSpeed); 
+            
+            let state = "ROUND_TREE";
+            let shapeTransition = 0;
+            if (timer < 8) state = "ROUND_TREE";
+            else if (timer < (8 + TRANSITION_DURATION)) {
+                state = "TRANSITION_TO_FIR";
+                shapeTransition = easeInOutQuad((timer - 8) / TRANSITION_DURATION);
+            }
+            else if (timer < 35) { state = "FIR_TREE"; shapeTransition = 1; }
+            else if (timer < 45) state = "SCATTER";
+            else state = "FLOW";
+
+            const riderFreq = 4 * (PHYSICS.currentSpeed / PHYSICS.maxSpeed);
+            riderGroup.y = window.innerHeight * 0.82 + Math.sin(timer * riderFreq) * 1.5;
+            riderGroup.rotation = Math.sin(timer * (riderFreq/2)) * 0.015;
+
+            if (currentRiderType === 'girl' && girlRider.visible) {
+                const hairSwayFreq = 6 * (PHYSICS.currentSpeed / PHYSICS.maxSpeed); 
+                const hairSwayAmpX = 0.8 + 1.2 * (PHYSICS.currentSpeed / PHYSICS.maxSpeed); 
+                const hairSwayAmpY = 0.4; 
+                
+                girlHairStrands.forEach((strand, index) => {
+                    strand.x = Math.sin(timer * hairSwayFreq + strand.swayOffsetStrand + index * 0.05) * hairSwayAmpX;
+                    strand.y = Math.cos(timer * (hairSwayFreq/2) + strand.swayOffsetStrand + index * 0.08) * hairSwayAmpY;
+                    strand.alpha = Math.sin(timer * hairSwayFreq + strand.swayOffsetStrand + index * 0.05) * 0.2 + 0.8; 
+                });
+            }
+
+            treeGroups.forEach(group => {
+                if (state !== "FLOW") {
+                    group.logicX -= PHYSICS.currentSpeed * delta;
+                    if (group.logicX < -650) group.logicX = window.innerWidth + 650;
+                }
+                group.trunk.x = group.logicX;
+                if (state === "SCATTER" || state === "FLOW") {
+                    group.trunk.alpha -= 0.0015;
+                    if (group.trunk.alpha <= 0) group.trunk.visible = false;
+                }
+                group.leaves.forEach(p => {
+                    if (state === "ROUND_TREE" || state === "TRANSITION_TO_FIR" || state === "FIR_TREE") {
+                        const targetRelX = p.roundX * (1 - shapeTransition) + p.firX * shapeTransition;
+                        const targetRelY = p.roundY * (1 - shapeTransition) + p.firY * shapeTransition;
+                        const currentYCenter = CANOPY_Y_CENTER + (shapeTransition * Y_OFFSET_COMPENSATION);
+                        p.x = group.logicX + targetRelX + Math.sin(timer + p.swayOffset) * 2;
+                        p.y = currentYCenter + targetRelY;
+                        p.alpha = 1; p.visible = true;
+                    } 
+                    else if (state === "SCATTER") {
+                        p.x -= p.driftSpeed * delta;
+                        p.y += Math.sin(p.x * 0.01 + p.swayOffset) * 0.4;
+                        p.alpha = Math.max(0.3, p.alpha - 0.0003); 
+                        if (p.x < -100) p.x = window.innerWidth + 100; 
+                    }
+                    else {
+                        // ======== 【核心修改：流光状态平滑加速】 ========
+                        if (p.texture !== trailTexture) {
+                            p.texture = trailTexture;
+                            p.anchor.set(0.05, 0.5); 
+                            p.scale.x = 0.15 + Math.random() * 0.1; 
+                            
+                            // 设定流光最终的“目标极速”
+                            p.targetDriftSpeed = 5.0 + Math.random() * 5.0; 
+                            // 注意：此时不直接修改 p.driftSpeed，它保留着散落阶段的速度
+                        }
+
+                        // 【速度渐变】平滑加速，直至达到目标极速
+                        if (p.targetDriftSpeed && p.driftSpeed < p.targetDriftSpeed) {
+                            p.driftSpeed += 0.05 * delta; // 极其丝滑的加速度
+                        }
+
+                        // 随加速过程，平滑拉长拖尾
+                        if (p.scale.x < 1.0 + p.swaySpeed * 15) {
+                            p.scale.x += 0.015 * delta;
+                        }
+
+                        if (p.alpha < 0.85) {
+                            p.alpha += 0.01 * delta;
+                        }
+
+                        // 应用当前速度
+                        p.x -= p.driftSpeed * delta; 
+                        p.y += Math.sin(p.x * 0.015 + p.swayOffset) * 0.8;
+                        
+                        if (p.x < -150) {
+                            p.x = window.innerWidth + 50;
+                            p.y = Math.random() * window.innerHeight * 0.8; 
+                            p.scale.x = 0.6 + Math.random() * 0.8; 
+                            // 飞出屏幕重生后，直接使用最高速度
+                            if (p.targetDriftSpeed) p.driftSpeed = p.targetDriftSpeed; 
+                        }
+                    }
+                });
+            });
+        });
+
+        const guide = document.getElementById('start-guide');
+        function goForward() { PHYSICS.targetSpeed = PHYSICS.maxSpeed; guide.style.opacity = '0'; }
+        function stopCycling() { PHYSICS.targetSpeed = 0; }
+        function switchCharacter() {
+            if (currentRiderType === 'boy') {
+                boyRider.visible = false;
+                girlRider.visible = true;
+                currentRiderType = 'girl';
+            } else {
+                boyRider.visible = true;
+                girlRider.visible = false;
+                currentRiderType = 'boy';
+            }
+        }
+
+        document.getElementById('btn-forward').addEventListener('click', goForward);
+        document.getElementById('btn-stop').addEventListener('click', stopCycling);
+        document.getElementById('btn-switch').addEventListener('click', switchCharacter);
+
+        window.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowUp') goForward();
+            if (e.key === 'ArrowDown') stopCycling();
+            if (e.key === ' ') switchCharacter();
+        });
+
+        window.addEventListener('resize', () => { app.renderer.resize(window.innerWidth, window.innerHeight); });
+    </script>
+</body>
+</html>
